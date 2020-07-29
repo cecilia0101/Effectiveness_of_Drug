@@ -1,0 +1,301 @@
+---
+title: "Capstone Project Effectiveness of a Drug"
+author: "Sutong Yao"
+date: "3/23/2020"
+output: pdf_document
+---
+Load the Dataset
+```{r setup, include=FALSE}
+test= read.csv("drugsComTest_raw_csv.csv")
+train= read.csv("drugsComTrain_raw_csv.csv")
+```
+
+Combine both datasets
+```{r}
+total <- rbind(test, train)
+str(total)
+```
+
+Clean symbols
+```{r}
+total$review=gsub("&#039;","'", total$review)
+```
+
+```{r}
+library(tm)
+corpus = Corpus(VectorSource(total$review))
+```
+
+Lower case
+```{r}
+corpus = tm_map(corpus, tolower)
+```
+
+Remove Punction 
+```{r}
+corpus = tm_map(corpus, removePunctuation)
+```
+
+Remove Stop words
+```{r}
+corpus = tm_map(corpus, removeWords, stopwords("english"))
+```
+
+Stem Words
+```{r}
+corpus = tm_map(corpus, stemDocument)
+```
+
+Bag of words matrix
+```{r}
+dtm = DocumentTermMatrix(corpus)
+```
+
+Remove Sparse Terms at 95% accounted for
+```{r}
+spdtm = removeSparseTerms(dtm, 0.95)
+spdtm
+```
+
+Convert to a data frame
+```{r}
+drugSparse = as.data.frame(as.matrix(spdtm))
+```
+
+Add dependent variable
+```{r}
+drugSparse$rating = total$rating
+drugSparse$effectiveness=ifelse(drugSparse$rating<= 3, "Adverse", ifelse(drugSparse$rating>=7, "Effective", "Ineffective"))
+```
+
+Split 80 20 split
+```{r}
+library(caTools)
+set.seed(123)
+split = sample.split(drugSparse$rating, SplitRatio = 0.8)
+train = subset(drugSparse, split==TRUE)
+test = subset(drugSparse, split==FALSE)
+```
+
+```{r}
+library(dplyr)
+train<- train %>% group_by(effectiveness) %>% sample_n(size = 60000,replace = TRUE)
+table(train$effectiveness)
+```
+
+KKNN Mehod K=3
+```{r}
+library(kknn)
+#k=3 this is the one that gave me 73% accuracy
+system.time(model1 <- train.kknn(rating~.,data=train, ks=3))
+#optimizer but I havent gotten it to run
+#system.time(model2 <- train.kknn(rating~.,data=train))
+model1
+pred1=predict(model1, newdata=test)
+
+
+pred1 = round(pred1,0)
+test$output= ifelse(test$rating<= 3, "Adverse", ifelse(test$rating>=7, "Effective", "Ineffective"))
+
+#create a dataframe for predictions
+pred1= data.frame(pred1)
+#create column output
+pred1$output= ifelse(pred1$pred1<= 3, "Adverse", ifelse(pred1$pred1>=7, "Effective", "Ineffective"))
+#accuracy
+acc1=mean(pred1$output==test$output)
+acc1
+```
+72% Accuracy 
+
+KKNN 
+Allow the model to chose optimal K
+```{r}
+test$output=NULL
+system.time(model2 <- train.kknn(rating~.,data=train))
+pred2=predict(model2, newdata=test)
+test$output= ifelse(test$rating<= 3, "Adverse", ifelse(test$rating>=7, "Effective", "Ineffective"))
+pred2= data.frame(pred2)
+#create column output
+pred2$output= ifelse(pred2$pred2<= 3, "Adverse", ifelse(pred2$pred2>=7, "Effective", "Ineffective"))
+#accuracy
+acc2=mean(pred2$output==test$output)
+acc2
+model2
+```
+79% Accuracy
+
+
+Multinomial Logistic Regression
+```{r}
+train$category= ifelse(train$effectiveness == "Adverse", 1, ifelse(train$effectiveness == "Effective", 3, 2))
+test$category= ifelse(test$effectiveness == "Adverse", 1, ifelse(test$effectiveness == "Effective", 3, 2))
+```
+
+```{r}
+write.csv(train,"/Users/yaosutong/Desktop/capstone/train.csv")
+write.csv(test,"/Users/yaosutong/Desktop/capstone/test.csv")
+```
+
+```{r}
+library(nnet)
+m <- multinom(factor(category) ~ .-effectiveness -rating, data=train)
+summary(m)
+predict(m) # Predicted outcome
+predict(m, type='probs') # prob of each outcome
+
+probs <- predict(m, type='probs')
+pred_test = predict(m, test)
+mean(pred_test== test$category) #prediction accuracy rate for test data is 70.23%
+table(pred_test)
+```
+prediction accuracy rate for test data is 70.23%
+prediction based on balanced-train data for text data is 58.12%
+
+```{r}
+# get the confusion matrix
+require(caret)
+library(e1071)
+confusionMatrix(factor(test$category), pred_test)
+
+```
+
+
+
+```{r}
+# get the confusion matrix
+require(caret)
+library(e1071)
+confusionMatrix(factor(test$category), pred_test)
+```
+
+```{r}
+#AUC
+
+```
+
+Random Forest
+```{r}
+library(ranger)
+library(caret)
+set.seed(100)
+model = train(rating~.,data=train,
+                method = "ranger", trControl = trainControl(method = "cv",
+                                                            number = 3), tuneLength = 2)
+
+pred = predict(model, test)
+pred = round(pred,0)
+test$output= ifelse(test$rating<= 3, "Adverse", ifelse(test$rating>=7, "Effective", "Ineffective"))
+
+pred= data.frame(pred)
+pred$output= ifelse(pred$pred<= 3, "Adverse", ifelse(pred$pred>=7, "Effective", "Ineffective"))
+#accuracy
+acc=mean(pred$output==test$output)
+acc
+```
+77% accuracy
+
+test dataset
+```{r}
+pred_logit = predict(logit, test)
+```
+```{r}
+mean(pred_logit == test$category)
+```
+69.95% accuracy
+
+
+
+
+xgboost
+```{r}
+#load libraries
+library(readxl)
+library(tidyverse)
+library(xgboost)
+library(caret)
+```
+
+```{r}
+train = as.data.frame(read_csv("/Users/yaosutong/Desktop/capstone/test.csv"))
+test = as.data.frame(read_csv("/Users/yaosutong/Desktop/capstone/test.csv"))
+```
+
+```{r}
+data_train = train %>% select(-category, -effectiveness, -rating)
+train_labs <- as.numeric(train$category) - 1
+data_test = test %>% select(-category, -effectiveness, -rating)
+test_labs = as.numeric(test$category) - 1
+```
+```{r}
+#check if it is dataframe
+print(is.data.frame(data_train))
+print(is.data.frame(label_train))
+```
+
+```{r}
+#convert to matrix
+train.data = as.matrix(data_train)
+test.data = as.matrix(data_test)
+```
+```{r}
+# create the xgb.DMatrix
+xgb.train = xgb.DMatrix(train.data, label=train_labs)
+xgb.test = xgb.DMatrix(test.data,label=test_labs)
+```
+
+```{r}
+# Define the parameters for multinomial classification
+num_class = 3
+params = list(
+  booster="gbtree",
+  eta=0.001,
+  max_depth=5,
+  gamma=3,
+  subsample=0.75,
+  colsample_bytree=1,
+  objective="multi:softprob",
+  eval_metric="mlogloss",
+  num_class=num_class
+)
+```
+
+```{r}
+# Train the XGBoost classifer
+xgb.fit=xgb.train(
+  params=params,
+  data=xgb.train,
+  nrounds=100,
+  nthreads=1,
+  early_stopping_rounds=10,
+  watchlist=list(val1=xgb.train,val2=xgb.test),
+  verbose=0
+)
+```
+
+```{r}
+# Review the final model and results
+xgb.fit
+```
+
+```{r}
+# Predict outcomes with the test data
+xgb.pred = predict(xgb.fit,test.data,reshape=T)
+xgb.pred = as.data.frame(xgb.pred)
+```
+
+```{r}
+# Use the predicted label with the highest probability
+xgb.pred$prediction = apply(xgb.pred,1,function(x) colnames(xgb.pred)[which.max(x)])
+xgb.pred$label = test$category
+```
+
+```{r}
+# Calculate the final accuracy
+result = sum(xgb.pred$prediction==xgb.pred$label)/nrow(xgb.pred)
+print(paste("Final Accuracy =",sprintf("%1.2f%%", 100*result)))
+```
+
+
+
+
+
